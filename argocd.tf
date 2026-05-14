@@ -96,11 +96,17 @@ resource "helm_release" "argocd" {
       }
 
       server = {
-        # ClusterIP — access via `kubectl port-forward` from bastion or
-        # via SSM port-forward from laptop. NOT exposed via internal ALB
-        # (saves an LB + simpler initial bringup).
+        # Internal NLB — provisions an AWS Network Load Balancer in the
+        # private subnets via EKS Auto Mode's built-in LB controller.
+        # Reachable from inside the VPC (bastion, other workloads). NOT
+        # internet-exposed.
         service = {
-          type = "ClusterIP"
+          type = "LoadBalancer"
+          annotations = {
+            "service.beta.kubernetes.io/aws-load-balancer-type"            = "external"
+            "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
+            "service.beta.kubernetes.io/aws-load-balancer-scheme"          = "internal"
+          }
         }
       }
 
