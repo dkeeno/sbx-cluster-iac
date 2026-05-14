@@ -152,7 +152,11 @@ jobs:
     name: apply
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
-    environment: production    # required reviewers configured in repo settings
+    # NOTE: sandbox has no second reviewer — environment gate omitted.
+    # Add back when this gets a real approver:
+    #   environment: production
+    # (and create the environment via repo Settings → Environments,
+    # configuring required_reviewers to include someone OTHER than you).
     steps:
       - uses: actions/checkout@v4
 
@@ -192,7 +196,8 @@ jobs:
     name: destroy
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
-    environment: production-destroy
+    # Same note as apply — no reviewer gate for sandbox.
+    # Add `environment: production-destroy` when there's a second reviewer.
     steps:
       - uses: actions/checkout@v4
 
