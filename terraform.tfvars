@@ -16,13 +16,12 @@ private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24", "10.0.12.0/24"]
 cluster_name       = "sbx-eks-01"
 kubernetes_version = "1.31"
 
-# Both the user that runs terraform locally AND the GH Actions role need
-# cluster-admin via EKS Access Entries (the modern replacement for the
-# aws-auth ConfigMap). Without these, no `kubectl` from either side works
-# even though IAM gives them every AWS-side permission.
+# NOTE: sbx-github-actions is NOT listed here — it gets cluster-admin
+# automatically because it's the principal that creates the cluster,
+# via bootstrap_cluster_creator_admin_permissions=true in eks.tf.
+# Listing it here would cause a 409 ResourceInUseException on apply.
 cluster_admin_principal_arns = [
   "arn:aws:iam::784916389752:user/agentic-ai-user",
-  "arn:aws:iam::784916389752:role/sbx-github-actions",
 ]
 
 # ----- Bastion -----

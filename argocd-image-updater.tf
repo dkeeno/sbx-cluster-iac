@@ -76,7 +76,8 @@ resource "helm_release" "image_updater" {
   chart      = "argocd-image-updater"
   version    = "0.11.0" # pin
 
-  timeout = 180
+  # 8 min — single pod, but Auto Mode node provisioning + image pull adds time
+  timeout = 480
   wait    = true
 
   values = [

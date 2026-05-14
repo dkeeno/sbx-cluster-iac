@@ -59,8 +59,10 @@ resource "helm_release" "argocd" {
   chart      = "argo-cd"
   version    = "7.7.5" # pin — bump deliberately
 
-  # 5 min — Auto Mode pulls from Karpenter pool; pod scheduling can take a while
-  timeout = 300
+  # 12 min — Auto Mode needs ~2 min to provision the first Karpenter node before
+  # any pod can schedule. Then ArgoCD's 5 pods (controller, server, repo-server,
+  # redis, applicationset-controller) image-pull + start. 5 min was too tight.
+  timeout = 720
   wait    = true
 
   values = [
