@@ -108,7 +108,7 @@ resource "helm_release" "image_updater" {
           name        = "ecr"
           api_url     = "https://${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
           prefix      = "${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
-          ping        = "yes"
+          ping        = true
           credentials = "ext:/scripts/ecr-login.sh"
           credsexpire = "11h"
         }]
