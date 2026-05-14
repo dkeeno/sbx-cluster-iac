@@ -54,7 +54,10 @@ permissions:
 
 env:
   TF_VERSION: '1.10.3'
-  AWS_REGION: us-east-1
+  # AWS_REGION sourced from repo Variable (Terraform-managed, see
+  # github-terraform-aws/bootstrap/github-secrets.tf). Set per repo
+  # by the bootstrap stack, single source of truth.
+  AWS_REGION: ${{ vars.AWS_REGION }}
 
 jobs:
   # ---------------------------------------------------------------------------
