@@ -5,9 +5,10 @@
 # AWS — credentials from the standard chain (AWS_PROFILE, env vars, or
 # the IAM role assumed via OIDC in CI).
 #
-# Kubernetes / Helm / kubectl — point at the EKS cluster created in
-# eks.tf using the cluster's API endpoint + CA + a short-lived token from
-# `aws_eks_cluster_auth`. Token is regenerated on every plan/apply.
+# Kubernetes / Helm / kubectl — endpoint + CA come directly from the
+# `aws_eks_cluster.this` RESOURCE attributes (not via data source — see
+# inline note below for why). Auth is via `exec` plugin which re-runs
+# `aws eks get-token` on every API call so the token is always fresh.
 
 provider "aws" {
   region = var.aws_region
