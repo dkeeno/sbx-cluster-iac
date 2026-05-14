@@ -42,9 +42,9 @@ output "ecr_registry" {
   value       = "${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
 }
 
-output "ecr_app_repo_urls" {
-  description = "Per-app ECR repo URLs."
-  value       = { for k, r in aws_ecr_repository.app : k => r.repository_url }
+output "ecr_repository_url" {
+  description = "Single ECR repo URL housing all app images. Tag pattern: <app>-<sha>."
+  value       = aws_ecr_repository.images.repository_url
 }
 
 output "image_updater_role_arn" {

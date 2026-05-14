@@ -69,10 +69,8 @@ variable "bastion_instance_type" {
 
 # ----- ECR -----
 
-variable "ecr_repos" {
-  description = "ECR repos to create for app images. Each gets immutable tags + scan-on-push."
-  type        = list(string)
-}
+# HARD RULE (feedback_single_ecr_repo.md): one ECR repo (`sbx-images`)
+# houses all app images, hardcoded in ecr.tf. No per-app variable here.
 
 variable "ecr_pull_through_caches" {
   description = "ECR pull-through cache rules. Map key = upstream registry alias used in image URLs."

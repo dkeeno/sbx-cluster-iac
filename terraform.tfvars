@@ -28,10 +28,8 @@ cluster_admin_principal_arns = [
 bastion_instance_type = "t3.medium"
 
 # ----- ECR -----
-ecr_repos = [
-  "sbx-images/online-shop",
-  "sbx-images/art-gallery",
-]
+# Single repo `sbx-images` is hardcoded in ecr.tf per HARD RULE.
+# No ecr_repos variable.
 
 ecr_pull_through_caches = {
   docker-hub = {

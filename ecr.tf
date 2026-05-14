@@ -1,27 +1,27 @@
 # =============================================================================
-# ecr.tf — ECR repos for app images + pull-through cache rules
+# ecr.tf — single ECR repository for ALL sandbox app images
 # =============================================================================
 #
-# One ECR repo per image. The `sbx-images/online-shop` namespace pattern
-# matches the GitLab AR convention (`sbx-images/<app>`) and the
-# IMAGE_REPO format hardcoded in the build-and-push reusable workflow.
+# HARD RULE (feedback_single_ecr_repo.md): one ECR repo for the whole
+# sandbox. Per-app discrimination is in the TAG, not in separate repos.
 #
-# Lifecycle policy: keep the 30 most recent tagged images, expire untagged
-# after 7 days. Sandbox-friendly; bigger projects would set lower numbers
-# to control storage cost (~$0.10/GB/mo).
+# Image URLs:
+#   <account>.dkr.ecr.us-east-1.amazonaws.com/sbx-images:online-shop-<sha>
+#   <account>.dkr.ecr.us-east-1.amazonaws.com/sbx-images:art-gallery-<sha>
+#   <account>.dkr.ecr.us-east-1.amazonaws.com/sbx-images:online-shop-latest
+#
+# Lifecycle policy: keep last 30 tagged images, expire untagged after 7
+# days. Single set of rules for the whole sandbox.
 #
 # Pull-through cache: lets the cluster pull `public.ecr.aws/<repo>:<tag>`
-# images THROUGH the local registry, getting cached after first pull.
-# Bandwidth + reliability win, no Docker Hub pull rate limits.
+# images THROUGH a local cache, getting cached after first pull.
 
 # -----------------------------------------------------------------------------
-# App image repos
+# Single app-image repository
 # -----------------------------------------------------------------------------
-resource "aws_ecr_repository" "app" {
-  for_each = toset(var.ecr_repos)
-
-  name                 = each.key
-  image_tag_mutability = "MUTABLE" # `latest` tag gets overwritten on every push
+resource "aws_ecr_repository" "images" {
+  name                 = "sbx-images"
+  image_tag_mutability = "MUTABLE" # `latest` per app gets overwritten on each push
 
   image_scanning_configuration {
     scan_on_push = true
@@ -35,23 +35,18 @@ resource "aws_ecr_repository" "app" {
   force_delete = true
 
   tags = {
-    Name = each.key
+    Name = "sbx-images"
   }
 }
 
-# -----------------------------------------------------------------------------
-# Lifecycle policy — same for every app repo
-# -----------------------------------------------------------------------------
-resource "aws_ecr_lifecycle_policy" "app" {
-  for_each = aws_ecr_repository.app
-
-  repository = each.value.name
+resource "aws_ecr_lifecycle_policy" "images" {
+  repository = aws_ecr_repository.images.name
 
   policy = jsonencode({
     rules = [
       {
         rulePriority = 1
-        description  = "Keep last 30 tagged images"
+        description  = "Keep last 30 tagged images (across all apps)"
         selection = {
           tagStatus      = "tagged"
           tagPatternList = ["*"]
@@ -78,9 +73,6 @@ resource "aws_ecr_lifecycle_policy" "app" {
 # -----------------------------------------------------------------------------
 # Pull-through cache rules
 # -----------------------------------------------------------------------------
-# Cache rule maps a local namespace (the key) to an upstream registry URL.
-# After this exists, you can `docker pull <account>.dkr.ecr.<region>.amazonaws.com/<key>/<image>:<tag>`
-# and ECR will fetch from upstream + cache automatically.
 resource "aws_ecr_pull_through_cache_rule" "this" {
   for_each = var.ecr_pull_through_caches
 
