@@ -158,10 +158,14 @@ resource "helm_release" "image_updater" {
         }]
       }]
 
-      # Extend PATH so `aws` is found from /shared-bin without absolute paths
+      # Extend PATH so `aws` is found from /shared-bin without absolute paths.
+      # HOME=/tmp because the chart sets readOnlyRootFilesystem; aws CLI tries
+      # to write its config/cache under $HOME/.aws — must be writable. /tmp is
+      # the only writable location in the IU container (besides emptyDirs).
       extraEnv = [
         { name = "PATH", value = "/shared-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" },
         { name = "AWS_REGION", value = var.aws_region },
+        { name = "HOME", value = "/tmp" },
       ]
 
       # Sibling ConfigMap holding the ECR-login script.
