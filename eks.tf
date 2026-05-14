@@ -28,8 +28,17 @@
 # -----------------------------------------------------------------------------
 data "aws_iam_policy_document" "eks_cluster_assume" {
   statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
+    effect = "Allow"
+    # sts:TagSession is REQUIRED for EKS Auto Mode. EKS injects session tags
+    # (eks:eks-cluster-name=<cluster>) when assuming this role, and the
+    # AWS-managed Auto Mode policies use those principal tags in conditions
+    # like aws:ResourceTag/eks:eks-cluster-name == aws:PrincipalTag/eks:eks-cluster-name
+    # to scope IAM operations (e.g. iam:CreateInstanceProfile for Karpenter).
+    # Without TagSession, the assume succeeds but the session has no tags,
+    # so every conditional permission silently grants nothing — Karpenter's
+    # NodeClass shows "InstanceProfileCreationFailed" and pods stay Pending.
+    # Reference: AWS-provided AmazonEKSAutoClusterRole template.
+    actions = ["sts:AssumeRole", "sts:TagSession"]
 
     principals {
       type        = "Service"
