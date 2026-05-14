@@ -146,17 +146,27 @@ jobs:
         run: exit 1
 
   # ---------------------------------------------------------------------------
-  # apply — manual workflow_dispatch only, gated by Environment approval
+  # apply — runs on push-to-main (gated) OR manual workflow_dispatch
   # ---------------------------------------------------------------------------
+  #
+  # GitLab-equivalent design: same pipeline run as validate+plan. After plan
+  # succeeds, the apply job pauses on the `production` Environment gate.
+  # User clicks "Review deployments → Approve and deploy" on the SAME run
+  # to continue. Apply re-uses the plan artifact (same workflow run = same
+  # ephemeral storage).
+  #
+  # For sandbox (1-person), the production environment must be configured
+  # with `Required reviewers: dkeeno` AND `Allow administrators to bypass
+  # configured protection rules` enabled, OR with 0 required reviewers
+  # (auto-approve). See repo Settings → Environments → production.
   apply:
     name: apply
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
-    # NOTE: sandbox has no second reviewer — environment gate omitted.
-    # Add back when this gets a real approver:
-    #   environment: production
-    # (and create the environment via repo Settings → Environments,
-    # configuring required_reviewers to include someone OTHER than you).
+    needs: plan
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+    environment: production
     steps:
       - uses: actions/checkout@v4
 
@@ -174,7 +184,22 @@ jobs:
       - name: Init
         run: terraform init
 
-      - name: Apply
+      # Download the plan artifact from the plan job (same workflow run)
+      # so apply executes EXACTLY what was reviewed at plan time.
+      - name: Download plan artifact
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+
+      - name: Apply (push to main → use plan artifact)
+        if: github.event_name == 'push'
+        env:
+          TF_VAR_github_pat_for_argocd: ${{ secrets.GITOPS_REPO_PAT }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Apply (workflow_dispatch → fresh plan + apply)
+        if: github.event_name == 'workflow_dispatch'
         env:
           TF_VAR_github_pat_for_argocd: ${{ secrets.GITOPS_REPO_PAT }}
         run: terraform apply -auto-approve
@@ -196,8 +221,8 @@ jobs:
     name: destroy
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
-    # Same note as apply — no reviewer gate for sandbox.
-    # Add `environment: production-destroy` when there's a second reviewer.
+    environment: production
+    # destroy is workflow_dispatch only — never auto-runs on a push.
     steps:
       - uses: actions/checkout@v4
 
