@@ -108,6 +108,12 @@ resource "aws_eks_cluster" "this" {
   role_arn = aws_iam_role.eks_cluster.arn
   version  = var.kubernetes_version
 
+  # REQUIRED for Auto Mode — turning on Auto Mode means EKS itself manages
+  # the addon set (CoreDNS, kube-proxy, VPC CNI, EBS CSI, ALB controller).
+  # Without this set to false, the create call returns
+  #   "When EKS Auto Mode is enabled, bootstrapSelfManagedAddons must be set to false."
+  bootstrap_self_managed_addons = false
+
   # Auto Mode — the magic block. node_pools=["general-purpose"] is the
   # default Karpenter pool that handles most workloads; you can add
   # "system" for bound-to-system-namespace pods.
