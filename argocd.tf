@@ -96,16 +96,21 @@ resource "helm_release" "argocd" {
       }
 
       server = {
-        # Internal NLB — provisions an AWS Network Load Balancer in the
-        # private subnets via EKS Auto Mode's built-in LB controller.
-        # Reachable from inside the VPC (bastion, other workloads). NOT
-        # internet-exposed.
+        # Internal NLB — EKS Auto Mode provisions it via the built-in NLB
+        # controller. Reachable from inside the VPC (bastion + workloads),
+        # NOT internet-exposed.
+        #
+        # CRITICAL: spec.loadBalancerClass = "eks.amazonaws.com/nlb" is
+        # REQUIRED on Auto Mode. Without it, the Service falls through to
+        # the legacy in-tree cloud-controller-manager — which doesn't
+        # exist on Auto Mode — and the LB silently never gets created.
+        # The Service stays "EnsuringLoadBalancer" forever.
         service = {
-          type = "LoadBalancer"
+          type              = "LoadBalancer"
+          loadBalancerClass = "eks.amazonaws.com/nlb"
           annotations = {
-            "service.beta.kubernetes.io/aws-load-balancer-type"            = "external"
-            "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
             "service.beta.kubernetes.io/aws-load-balancer-scheme"          = "internal"
+            "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
           }
         }
       }
