@@ -1,0 +1,12 @@
+# HARD RULE — no .terraform* artifacts in repos
+.terraform/
+.terraform.lock.hcl
+
+# State files (this stack uses S3 backend, but be safe)
+*.tfstate
+*.tfstate.backup
+*.tfplan
+tfplan*
+
+# OS noise
+.DS_Store

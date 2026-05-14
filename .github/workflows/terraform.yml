@@ -1,0 +1,216 @@
+# =============================================================================
+# terraform.yml — validate / plan / manual-apply pipeline
+# =============================================================================
+#
+# Three jobs, gated as you'd expect:
+#
+#   PR open/sync → fmt-check + validate + plan (plan posted as PR comment)
+#   push to main → fmt-check + validate + plan (plan archived as artifact)
+#   workflow_dispatch on main → apply (gated by GitHub Environment "production"
+#     which requires manual approval — set up by the bootstrap repo)
+#
+# Mirrors the GitLab `validate -> plan -> manual apply` 3-stage pipeline
+# from sbx-02-cluster-iac on GCP.
+#
+# Auth: GitHub OIDC → AWS IAM role sbx-github-actions (set up by bootstrap).
+#
+# Required secrets (already injected by bootstrap stack):
+#   AWS_ROLE_ARN — IAM role assumed via OIDC
+#
+# Required secrets you must add manually (one-time):
+#   GITOPS_REPO_PAT — fine-grained PAT with `Contents: Read` on the
+#     dkeeno/sbx-manifests repo. ArgoCD uses this to clone the gitops
+#     repo. Add via: Settings → Secrets and variables → Actions → New
+#     repository secret. The terraform variable github_pat_for_argocd
+#     reads it via TF_VAR_github_pat_for_argocd env (set in the apply step).
+
+name: terraform
+
+on:
+  pull_request:
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - '.github/workflows/terraform.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - '.github/workflows/terraform.yml'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Apply or Destroy
+        type: choice
+        required: true
+        default: apply
+        options: [apply, destroy]
+
+permissions:
+  contents: read
+  id-token: write   # OIDC token for AWS auth
+  pull-requests: write  # to comment plan output on PRs
+
+env:
+  TF_VERSION: '1.10.3'
+  AWS_REGION: us-east-1
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # validate — runs on every PR and main push
+  # ---------------------------------------------------------------------------
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init (no backend — validate-only)
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate
+
+  # ---------------------------------------------------------------------------
+  # plan — also runs on every PR and main push, posts to PR
+  # ---------------------------------------------------------------------------
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch'
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-tf-plan-${{ github.run_id }}
+
+      - name: Init (real backend)
+        run: terraform init
+
+      - name: Plan
+        id: plan
+        env:
+          TF_VAR_github_pat_for_argocd: ${{ secrets.GITOPS_REPO_PAT }}
+        run: |
+          set +e
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan-output.txt
+          echo "exit=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload plan artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: |
+            tfplan
+            plan-output.txt
+          retention-days: 14
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let plan = fs.readFileSync('plan-output.txt', 'utf8');
+            // Truncate to fit PR comment limit (65k chars)
+            if (plan.length > 60000) plan = plan.slice(0, 60000) + '\n\n... (truncated)';
+            const body = `### terraform plan\n\n<details><summary>Show plan</summary>\n\n\`\`\`\n${plan}\n\`\`\`\n\n</details>`;
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      - name: Fail if plan errored
+        if: steps.plan.outputs.exit != '0' && steps.plan.outputs.exit != '2'
+        run: exit 1
+
+  # ---------------------------------------------------------------------------
+  # apply — manual workflow_dispatch only, gated by Environment approval
+  # ---------------------------------------------------------------------------
+  apply:
+    name: apply
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
+    environment: production    # required reviewers configured in repo settings
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-tf-apply-${{ github.run_id }}
+
+      - name: Init
+        run: terraform init
+
+      - name: Apply
+        env:
+          TF_VAR_github_pat_for_argocd: ${{ secrets.GITOPS_REPO_PAT }}
+        run: terraform apply -auto-approve
+
+      - name: Capture outputs
+        run: terraform output -json > terraform-outputs.json
+
+      - name: Upload outputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-${{ github.run_id }}
+          path: terraform-outputs.json
+          retention-days: 90
+
+  # ---------------------------------------------------------------------------
+  # destroy — manual workflow_dispatch only, separate environment
+  # ---------------------------------------------------------------------------
+  destroy:
+    name: destroy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+    environment: production-destroy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-tf-destroy-${{ github.run_id }}
+
+      - name: Init
+        run: terraform init
+
+      - name: Destroy
+        env:
+          TF_VAR_github_pat_for_argocd: ${{ secrets.GITOPS_REPO_PAT }}
+        run: terraform destroy -auto-approve
