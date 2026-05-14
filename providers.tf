@@ -21,20 +21,17 @@ provider "aws" {
   }
 }
 
-# Pull cluster info AFTER eks.tf creates it. data sources lazy-resolve at
-# apply time so this works on a clean apply.
-data "aws_eks_cluster" "this" {
-  name       = aws_eks_cluster.this.name
-  depends_on = [aws_eks_cluster.this]
-}
+# Use cluster RESOURCE attributes directly (not via data source). Terraform
+# evaluates resource attributes during refresh; data sources with depends_on
+# can be deferred and return empty, causing the kubernetes provider to fall
+# back to "host = localhost" -> connection refused.
+#
+# exec auth re-runs `aws eks get-token` on every k8s API call so the token
+# is always fresh.
 
-# exec auth is more robust than data.aws_eks_cluster_auth.token — the token
-# approach refreshes only when the data source is re-evaluated, and Terraform
-# can use a stale token across plan/apply cycles. exec re-runs `aws eks get-token`
-# on EVERY API call, always getting a fresh token.
 provider "kubernetes" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  host                   = aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.this.certificate_authority[0].data)
   exec {
     api_version = "client.authentication.k8s.io/v1beta1"
     command     = "aws"
@@ -44,8 +41,8 @@ provider "kubernetes" {
 
 provider "helm" {
   kubernetes {
-    host                   = data.aws_eks_cluster.this.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+    host                   = aws_eks_cluster.this.endpoint
+    cluster_ca_certificate = base64decode(aws_eks_cluster.this.certificate_authority[0].data)
     exec {
       api_version = "client.authentication.k8s.io/v1beta1"
       command     = "aws"
@@ -55,8 +52,8 @@ provider "helm" {
 }
 
 provider "kubectl" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  host                   = aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.this.certificate_authority[0].data)
   load_config_file       = false
   exec {
     api_version = "client.authentication.k8s.io/v1beta1"
