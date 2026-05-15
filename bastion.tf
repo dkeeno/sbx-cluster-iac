@@ -234,8 +234,14 @@ resource "aws_instance" "bastion" {
     http_endpoint               = "enabled"
   }
 
-  user_data                   = local.bastion_user_data
-  user_data_replace_on_change = false # don't recreate on script tweaks
+  user_data = local.bastion_user_data
+  # TRUE so any change to bastion_user_data (e.g. the kubectl-wrapper fix)
+  # triggers an instance REPLACEMENT — that's the only way new user_data
+  # actually runs (AWS doesn't re-execute user_data on a running instance).
+  # Cost of replacement: bastion gets a new instance ID + private IP. All
+  # docs + workflows look up the bastion by tag (Name=sbx-bastion-01) so
+  # the change is transparent to consumers.
+  user_data_replace_on_change = true
 
   root_block_device {
     volume_size           = 50
