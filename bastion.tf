@@ -229,7 +229,12 @@ locals {
 # resource), Terraform sees no diff on next plan and never replaces.
 # This data-resource catches that drift case.
 resource "terraform_data" "bastion_user_data_hash" {
-  input = sha256(local.bastion_user_data)
+  # `triggers_replace` (NOT `input`) is the attribute that actually fires
+  # downstream `replace_triggered_by` lifecycle hooks. `input` only stores
+  # the value in state without triggering replacement chains. Changing
+  # this hash → terraform_data is REPLACED → aws_instance.bastion is
+  # REPLACED via its replace_triggered_by lifecycle.
+  triggers_replace = sha256(local.bastion_user_data)
 }
 
 # -----------------------------------------------------------------------------
