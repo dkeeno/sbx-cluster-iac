@@ -216,6 +216,23 @@ locals {
 }
 
 # -----------------------------------------------------------------------------
+# user_data hash — force bastion replacement when content changes
+# -----------------------------------------------------------------------------
+#
+# Sentinel resource. Stores a sha256 of the rendered user_data so any
+# textual change produces a new hash, triggering replacement of
+# aws_instance.bastion via its `replace_triggered_by` lifecycle hook.
+#
+# Why not just rely on `user_data_replace_on_change=true`? If a prior
+# failed apply already updated state's user_data attribute (without
+# actually replacing the instance — e.g. the apply errored on a later
+# resource), Terraform sees no diff on next plan and never replaces.
+# This data-resource catches that drift case.
+resource "terraform_data" "bastion_user_data_hash" {
+  input = sha256(local.bastion_user_data)
+}
+
+# -----------------------------------------------------------------------------
 # The bastion EC2 instance
 # -----------------------------------------------------------------------------
 resource "aws_instance" "bastion" {
@@ -236,12 +253,24 @@ resource "aws_instance" "bastion" {
 
   user_data = local.bastion_user_data
   # TRUE so any change to bastion_user_data (e.g. the kubectl-wrapper fix)
-  # triggers an instance REPLACEMENT — that's the only way new user_data
-  # actually runs (AWS doesn't re-execute user_data on a running instance).
+  # triggers an instance REPLACEMENT — AWS doesn't re-execute user_data
+  # on a running instance, so the only way new user_data actually runs is
+  # to recreate the instance.
+  user_data_replace_on_change = true
+
+  # Belt + braces: when user_data drifted between Terraform state and the
+  # live instance (because of a prior failed apply that updated state but
+  # not the instance), `user_data_replace_on_change` alone won't notice.
+  # The terraform_data hash below changes whenever the rendered user_data
+  # changes; pairing it with `replace_triggered_by` forces replacement on
+  # FIRST apply too. After this lands, drift can never persist silently.
+  lifecycle {
+    replace_triggered_by = [terraform_data.bastion_user_data_hash]
+  }
+
   # Cost of replacement: bastion gets a new instance ID + private IP. All
   # docs + workflows look up the bastion by tag (Name=sbx-bastion-01) so
-  # the change is transparent to consumers.
-  user_data_replace_on_change = true
+  # consumers don't break.
 
   root_block_device {
     volume_size           = 50
