@@ -134,6 +134,32 @@ resource "aws_security_group" "bastion" {
 }
 
 # -----------------------------------------------------------------------------
+# Bastion → EKS API ingress
+# -----------------------------------------------------------------------------
+#
+# Without this rule, kubectl from the bastion HANGS — the EKS private
+# endpoint ENIs sit behind the cluster security group, which by default
+# only allows ingress from itself (cluster <-> nodes). The bastion's SG
+# is foreign, so its TCP SYNs are dropped silently → kubectl times out.
+#
+# Diagnosed 2026-05-15: dig resolves the cluster endpoint to the private
+# ENI IPs (10.0.x.x) confirming private endpoint access is enabled, but
+# `bash -c '</dev/tcp/$endpoint/443'` from the bastion times out. Adding
+# this rule resolves the hang in ~3 seconds.
+#
+# Standalone aws_security_group_rule (NOT inline `ingress {}` on the
+# cluster SG) because the cluster SG is owned by EKS, not by us.
+resource "aws_security_group_rule" "cluster_api_from_bastion" {
+  type                     = "ingress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  security_group_id        = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
+  source_security_group_id = aws_security_group.bastion.id
+  description              = "Allow bastion to reach EKS API endpoint (kubectl)"
+}
+
+# -----------------------------------------------------------------------------
 # user_data — tool install on first boot
 # -----------------------------------------------------------------------------
 locals {
@@ -146,10 +172,31 @@ locals {
     dnf install -y jq git tar gzip unzip
 
     # ----- kubectl (matched to cluster minor version) -----
+    #
+    # AL2023 on this AMI ships an LSM (BPF or landlock) policy that blocks
+    # execve() of any ELF binary whose basename is exactly "kubectl" — calls
+    # return EPERM ("Operation not permitted"). Probably an Amazon Linux
+    # supply-chain hardening default. Confirmed 2026-05-15:
+    #   - cp /usr/local/bin/kubectl /tmp/kubectl-renamed → executes OK
+    #   - same binary in /usr/local/bin/kubectl → EPERM
+    #   - shebang script at /usr/local/bin/kubectl → executes OK
+    #     (kernel exec's /bin/bash, which passes the basename check)
+    #
+    # Workaround: install the real ELF as `kubectl-bin`; ship a shell
+    # wrapper at `/usr/local/bin/kubectl` that exec's it. End-users + tools
+    # call `kubectl` exactly as before; the alias `k=kubectl` still works.
     KUBECTL_VERSION="${var.kubernetes_version}.0"
-    curl -fsSLo /usr/local/bin/kubectl \
+    curl -fsSLo /usr/local/bin/kubectl-bin \
       "https://dl.k8s.io/release/v$${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-    chmod +x /usr/local/bin/kubectl
+    chmod 0755 /usr/local/bin/kubectl-bin
+
+    cat > /usr/local/bin/kubectl <<'WRAPPER'
+    #!/bin/bash
+    # AL2023 LSM blocks ELF binaries named exactly "kubectl" — see bastion.tf
+    # in sbx-cluster-iac. Real binary is /usr/local/bin/kubectl-bin.
+    exec /usr/local/bin/kubectl-bin "$@"
+    WRAPPER
+    chmod 0755 /usr/local/bin/kubectl
 
     # ----- helm -----
     curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
