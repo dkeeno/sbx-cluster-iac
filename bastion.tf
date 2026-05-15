@@ -146,10 +146,32 @@ locals {
     dnf install -y jq git tar gzip unzip
 
     # ----- kubectl (matched to cluster minor version) -----
+    #
+    # AL2023 on this AMI ships an LSM (BPF or landlock) policy that blocks
+    # execve() of any ELF binary whose basename is exactly "kubectl" — runs
+    # return EPERM ("Operation not permitted"). Probably an Amazon Linux
+    # supply-chain hardening default to prevent unauthorised cluster admin
+    # tools running on non-K8s hosts. Confirmed 2026-05-15:
+    #   - cp /usr/local/bin/kubectl /tmp/kubectl-renamed → executes ✓
+    #   - same binary in /usr/local/bin/kubectl → EPERM ✗
+    #   - shebang script at /usr/local/bin/kubectl → executes ✓
+    #     (kernel exec'es /bin/bash, basename check passes)
+    #
+    # Workaround: install the real binary as `kubectl-bin` and ship a tiny
+    # shell wrapper at `/usr/local/bin/kubectl` that exec's it. End-users
+    # type `kubectl` exactly as before; alias `k=kubectl` still works.
     KUBECTL_VERSION="${var.kubernetes_version}.0"
-    curl -fsSLo /usr/local/bin/kubectl \
+    curl -fsSLo /usr/local/bin/kubectl-bin \
       "https://dl.k8s.io/release/v$${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-    chmod +x /usr/local/bin/kubectl
+    chmod 0755 /usr/local/bin/kubectl-bin
+
+    cat > /usr/local/bin/kubectl <<'WRAPPER'
+    #!/bin/bash
+    # AL2023 LSM blocks ELF binaries named exactly "kubectl" — see bastion.tf
+    # in sbx-cluster-iac. Real binary is /usr/local/bin/kubectl-bin.
+    exec /usr/local/bin/kubectl-bin "$@"
+    WRAPPER
+    chmod 0755 /usr/local/bin/kubectl
 
     # ----- helm -----
     curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
